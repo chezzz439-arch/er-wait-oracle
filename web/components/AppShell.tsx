@@ -35,9 +35,12 @@ export default function AppShell() {
   const mapCenter = data?.location ? { lat: data.location.lat, lng: data.location.lng } : null;
 
   // Weather is fetched client-side (browser → Open-Meteo, CORS, near the user) so
-  // it loads reliably on Vercel; the server payload weather is a fallback.
-  const clientWeather = useWeather(geo.coords ?? mapCenter);
-  const weather = clientWeather ?? data?.weather ?? null;
+  // it loads reliably on Vercel, where the server-side fetch is blocked/slow.
+  // Strictly GPS-driven: only the user's REAL coordinates are used — never the SF
+  // default — so weather reflects wherever the user actually is, or shows nothing
+  // until they share location (rather than misleading SF weather).
+  const clientWeather = useWeather(geo.coords);
+  const weather = geo.coords ? clientWeather ?? data?.weather ?? null : null;
 
   const focusOn = useCallback((id: string) => {
     setActiveFacilityId(id);
