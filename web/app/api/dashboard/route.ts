@@ -117,10 +117,28 @@ function parseCoord(v: string | null, lo: number, hi: number): number | null {
 export async function GET(req: NextRequest) {
   const now = new Date();
   const sp = req.nextUrl.searchParams;
-  const lat = parseCoord(sp.get('lat'), -90, 90);
-  const lng = parseCoord(sp.get('lng'), -180, 180);
-  const hasGps = lat != null && lng != null;
-  const origin = hasGps ? { lat, lng } : SF_DEFAULT;
+
+  // Location precedence: precise GPS from the client → Vercel's approximate
+  // IP-based geo (injected on every request, no permission needed) → SF default.
+  const gLat = parseCoord(sp.get('lat'), -90, 90);
+  const gLng = parseCoord(sp.get('lng'), -180, 180);
+  const ipLat = parseCoord(req.headers.get('x-vercel-ip-latitude'), -90, 90);
+  const ipLng = parseCoord(req.headers.get('x-vercel-ip-longitude'), -180, 180);
+  const ipCity = req.headers.get('x-vercel-ip-city');
+  const ipRegion = req.headers.get('x-vercel-ip-country-region');
+
+  let origin: { lat: number; lng: number };
+  let source: DashboardLocation['source'];
+  if (gLat != null && gLng != null) {
+    origin = { lat: gLat, lng: gLng };
+    source = 'gps';
+  } else if (ipLat != null && ipLng != null) {
+    origin = { lat: ipLat, lng: ipLng };
+    source = 'ip';
+  } else {
+    origin = SF_DEFAULT;
+    source = 'default';
+  }
 
   const nearby = nearestHospitals(origin, NEAREST_N);
 
@@ -235,16 +253,22 @@ export async function GET(req: NextRequest) {
 
   const nearSF = isNearSF(origin);
   const nearestCity = hospitals[0];
-  const label = hasGps
-    ? nearestCity?.city
-      ? `Near ${nearestCity.city}, ${nearestCity.state}`
-      : 'Near you'
-    : 'San Francisco, CA';
+  const cityFromIp = ipCity ? decodeURIComponent(ipCity) : null;
+  let label: string;
+  if (source === 'gps') {
+    label = nearestCity?.city ? `Near ${nearestCity.city}, ${nearestCity.state}` : 'Near you';
+  } else if (source === 'ip') {
+    const city = cityFromIp || nearestCity?.city;
+    const region = ipRegion || nearestCity?.state;
+    label = city ? `Around ${city}${region ? `, ${region}` : ''}` : 'Around your area';
+  } else {
+    label = 'San Francisco, CA';
+  }
   const location: DashboardLocation = {
     lat: origin.lat,
     lng: origin.lng,
     label,
-    source: hasGps ? 'gps' : 'default',
+    source,
   };
 
   const anyModel = predRows.length > 0;

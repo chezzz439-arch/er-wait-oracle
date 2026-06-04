@@ -1,13 +1,27 @@
 'use client';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
-import { ArrowUpDown, CircleAlert, MapPin, Locate, ChevronRight } from 'lucide-react';
+import { ArrowUpDown, CircleAlert, MapPin, Locate, ChevronRight, Info, Sparkles } from 'lucide-react';
 import { BusyLevelPill } from './primitives';
 import { LEVEL_HEX } from '@/lib/theme';
 import { formatMiles } from '@/lib/geo';
+import { syntheticOps } from '@/lib/synthetic';
 import type { HospitalView } from '@/lib/types';
 
-type SortMode = 'score' | 'name' | 'distance';
+type SortMode = 'best' | 'score' | 'distance' | 'name';
+
+// "Best value" — a higher-is-better blend of the things that actually matter when
+// choosing an ER: low predicted busyness, short distance, and open capacity
+// (ED beds + ambulances). Mirrors the recommendation logic, plus capacity.
+function bestValue(h: HospitalView, located: boolean): number {
+  const ops = syntheticOps(h);
+  const lessBusy = 100 - h.prediction.busyScore; // 0..100, higher = quieter
+  const closeness = located ? 100 - Math.min(100, (h.distanceMiles ?? 30) * 6) : 50; // ~16mi → 0
+  const bedPct = ops.edBedsTotal ? (ops.edBedsOpen / ops.edBedsTotal) * 100 : 0;
+  const ambPct = ops.ambulancesTotal ? (ops.ambulancesAvailable / ops.ambulancesTotal) * 100 : 0;
+  const capacity = 0.6 * bedPct + 0.4 * ambPct;
+  return 0.4 * lessBusy + (located ? 0.35 : 0.1) * closeness + 0.25 * capacity;
+}
 
 function HospitalRow({
   hospital,
@@ -104,34 +118,52 @@ export default function HospitalList({
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
 }) {
-  // Default to distance order once we have a real location — it's the useful one.
-  const [sort, setSort] = useState<SortMode>('distance');
-  const effectiveSort: SortMode = sort === 'distance' && !located ? 'score' : sort;
+  // Default to the "Best value" composite — the most decision-useful order.
+  const [sort, setSort] = useState<SortMode>('best');
+  const [showInfo, setShowInfo] = useState(false);
+  const effectiveSort: SortMode = sort === 'distance' && !located ? 'best' : sort;
 
   const sorted = useMemo(() => {
     const arr = [...hospitals];
-    if (effectiveSort === 'score') arr.sort((a, b) => a.prediction.busyScore - b.prediction.busyScore);
+    if (effectiveSort === 'best') arr.sort((a, b) => bestValue(b, located) - bestValue(a, located));
+    else if (effectiveSort === 'score') arr.sort((a, b) => a.prediction.busyScore - b.prediction.busyScore);
     else if (effectiveSort === 'name') arr.sort((a, b) => a.shortName.localeCompare(b.shortName));
     else arr.sort((a, b) => (a.distanceMiles ?? 1e9) - (b.distanceMiles ?? 1e9));
     return arr;
-  }, [hospitals, effectiveSort]);
+  }, [hospitals, effectiveSort, located]);
 
   const cycleSort = () => {
     setSort((s) => {
-      if (s === 'distance') return 'score';
-      if (s === 'score') return 'name';
-      return located ? 'distance' : 'score';
+      if (s === 'best') return 'score';
+      if (s === 'score') return located ? 'distance' : 'name';
+      if (s === 'distance') return 'name';
+      return 'best';
     });
   };
-  const sortLabel = effectiveSort === 'score' ? 'Score' : effectiveSort === 'name' ? 'Name' : 'Distance';
+  const sortLabel =
+    effectiveSort === 'best' ? 'Best value' : effectiveSort === 'score' ? 'Least busy' : effectiveSort === 'name' ? 'Name' : 'Distance';
+  const sortHeadline =
+    effectiveSort === 'best'
+      ? 'best overall first'
+      : effectiveSort === 'score'
+        ? 'least busy first'
+        : effectiveSort === 'distance'
+          ? 'closest first'
+          : 'A–Z';
 
   return (
     <section className="flex flex-col rounded-2xl bg-surface p-2.5 shadow-card">
       {/* Fixed header; the rows below scroll within this panel */}
-      <div className="mb-1.5 flex items-center justify-between gap-2 px-2 py-1">
-        <span className="truncate text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted">
-          {located ? `${hospitals.length} nearest ERs` : `${hospitals.length} ERs`} ·{' '}
-          {effectiveSort === 'distance' ? 'closest first' : 'least busy first'}
+      <div className="relative mb-1.5 flex items-center justify-between gap-2 px-2 py-1">
+        <span className="flex min-w-0 items-center gap-1 truncate text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted">
+          {located ? `${hospitals.length} nearest ERs` : `${hospitals.length} ERs`} · {sortHeadline}
+          <button
+            onClick={() => setShowInfo((v) => !v)}
+            className="shrink-0 text-muted/70 transition hover:text-accent"
+            title="What do the score and sorts mean?"
+          >
+            <Info size={12} />
+          </button>
         </span>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -148,11 +180,36 @@ export default function HospitalList({
           <button
             onClick={cycleSort}
             className="flex items-center gap-1 rounded-full px-2 py-1 text-[0.68rem] font-medium text-muted transition hover:bg-surfaceAlt"
-            title="Toggle sort"
+            title="Change sort"
           >
-            <ArrowUpDown size={12} /> {sortLabel}
+            {effectiveSort === 'best' ? <Sparkles size={12} /> : <ArrowUpDown size={12} />} {sortLabel}
           </button>
         </div>
+
+        {showInfo && (
+          <>
+            <button
+              aria-label="Close"
+              onClick={() => setShowInfo(false)}
+              className="fixed inset-0 z-[40] cursor-default"
+            />
+            <div className="absolute right-2 top-9 z-[50] w-[270px] animate-fadeIn rounded-xl border border-hairline bg-surface p-3 text-[0.72rem] leading-relaxed text-muted shadow-float">
+              <p className="mb-1.5 font-semibold text-ink">The 0–100 score = predicted ER busyness</p>
+              <p>
+                Built from each ER’s CMS baseline (patient-volume tier + median visit time), the
+                time of day, and live local weather — or a Claude forecast when available.{' '}
+                <span className="font-medium text-ink/80">0 = empty, 100 = overwhelmed.</span>
+              </p>
+              <p className="mt-2 mb-1 font-semibold text-ink">Sort options</p>
+              <ul className="space-y-1">
+                <li><span className="font-medium text-ink/80">Best value</span> — overall pick: blends low busyness, closeness, and open beds/ambulances.</li>
+                <li><span className="font-medium text-ink/80">Least busy</span> — lowest score only.</li>
+                <li><span className="font-medium text-ink/80">Distance</span> — closest to you first.</li>
+                <li><span className="font-medium text-ink/80">Name</span> — A–Z.</li>
+              </ul>
+            </div>
+          </>
+        )}
       </div>
       {geoStatus === 'denied' && (
         <p className="px-2 pb-1 text-[0.66rem] text-busyModerate">

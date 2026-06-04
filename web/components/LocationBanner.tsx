@@ -8,10 +8,14 @@ import { Navigation, TriangleAlert, Locate } from 'lucide-react';
 export default function LocationBanner({
   status,
   located,
+  source = 'default',
+  areaLabel = null,
   onLocate,
 }: {
   status: string;
   located: boolean;
+  source?: 'gps' | 'ip' | 'default';
+  areaLabel?: string | null;
   onLocate: () => void;
 }) {
   if (located) return null;
@@ -19,12 +23,18 @@ export default function LocationBanner({
   const prompting = status === 'prompting';
   const denied = status === 'denied';
   const unavailable = status === 'unavailable';
+  const onIp = source === 'ip'; // we already have an approximate area from IP
+
+  // What we're showing instead of precise GPS: the IP-based area, or SF default.
+  const fallbackArea = onIp && areaLabel ? areaLabel.replace(/^Around\s+/, '') : 'San Francisco';
 
   const message = denied
-    ? 'Location is blocked — showing San Francisco. Enable location for this site in your browser settings, then retry.'
+    ? `Location is blocked — showing ${fallbackArea}. Enable location for this site in your browser settings, then retry.`
     : unavailable
-      ? "Couldn't get your location — showing San Francisco. Check that location services are on, then retry."
-      : 'Find the nearest ERs to you anywhere in the US — showing San Francisco until you share your location.';
+      ? `Couldn't get your precise location — showing ${fallbackArea}. Check that location services are on, then retry.`
+      : onIp
+        ? `Showing ERs around ${fallbackArea} (estimated from your network). Share your location for precise distances.`
+        : 'Find the nearest ERs to you anywhere in the US — share your location to begin.';
 
   return (
     <div className="border-b border-accent/20 bg-accent/[0.07]">

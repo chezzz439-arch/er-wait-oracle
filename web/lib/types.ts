@@ -63,12 +63,13 @@ export interface Recommendation {
   distanceMiles: number | null; // travel distance from the active location
 }
 
-// The location the dashboard is centered on — the user's GPS, or the SF default.
+// The location the dashboard is centered on: precise GPS, approximate IP-based
+// geo (Vercel request headers), or the SF default when neither is available.
 export interface DashboardLocation {
   lat: number;
   lng: number;
-  label: string; // e.g. "San Francisco, CA" or "Near you"
-  source: 'gps' | 'default';
+  label: string; // e.g. "Near San Francisco, CA", "Around Denver, CO"
+  source: 'gps' | 'ip' | 'default';
 }
 
 export interface DashboardData {

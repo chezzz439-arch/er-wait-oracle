@@ -31,16 +31,17 @@ export default function AppShell() {
   const hospitals = data?.hospitals ?? [];
   const recommendation = data?.recommendation ?? null;
   const recommendedId = recommendation?.facilityId ?? null;
-  const located = data?.location?.source === 'gps';
+  const locSource = data?.location?.source ?? 'default';
+  const hasLocation = locSource !== 'default'; // precise GPS or approximate IP
+  const located = locSource === 'gps';
   const mapCenter = data?.location ? { lat: data.location.lat, lng: data.location.lng } : null;
 
-  // Weather is fetched client-side (browser → Open-Meteo, CORS, near the user) so
-  // it loads reliably on Vercel, where the server-side fetch is blocked/slow.
-  // Strictly GPS-driven: only the user's REAL coordinates are used — never the SF
-  // default — so weather reflects wherever the user actually is, or shows nothing
-  // until they share location (rather than misleading SF weather).
-  const clientWeather = useWeather(geo.coords);
-  const weather = geo.coords ? clientWeather ?? data?.weather ?? null : null;
+  // Weather is fetched client-side (browser → Open-Meteo, near the user) so it
+  // loads where the Vercel server-side fetch can't. It targets the user's real
+  // location — precise GPS if shared, otherwise the IP-based area from the server
+  // — and never the SF default, so it always reflects where the user actually is.
+  const weatherCoords = geo.coords ?? (hasLocation ? mapCenter : null);
+  const weather = useWeather(weatherCoords) ?? (hasLocation ? data?.weather ?? null : null);
 
   const focusOn = useCallback((id: string) => {
     setActiveFacilityId(id);
@@ -115,6 +116,8 @@ export default function AppShell() {
       <LocationBanner
         status={geo.status}
         located={located || geo.status === 'granted'}
+        source={locSource}
+        areaLabel={data?.location?.label ?? null}
         onLocate={geo.request}
       />
 
@@ -150,7 +153,7 @@ export default function AppShell() {
             cityAvg={cityAvg}
             notice={data?.notice ?? null}
             userLoc={geo.coords}
-            located={located}
+            located={hasLocation}
             onViewOnMap={() => recommendedId && focusOn(recommendedId)}
             onViewDetails={() => recommendedId && openDetail(recommendedId)}
           />
@@ -172,7 +175,7 @@ export default function AppShell() {
             hospitals={hospitals}
             activeFacilityId={activeFacilityId}
             recommendedId={recommendedId}
-            located={located}
+            located={hasLocation}
             geoStatus={geo.status}
             onLocate={geo.request}
             onHover={setActiveFacilityId}
