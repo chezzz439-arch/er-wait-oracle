@@ -14,6 +14,8 @@ export interface GeolocationState {
 
 const GOOD_ENOUGH_M = 100; // stop refining once within 100 m…
 const REFINE_WINDOW_MS = 10000; // …or after 10 s, whichever comes first
+const POOR_ACCURACY_M = 500; // a fix worse than this triggers one fresh retry
+// maximumAge:0 forces a brand-new GPS read every time (never the cached position).
 const GEO_OPTS: PositionOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
 
 // Browser geolocation with progressive refinement:
@@ -32,6 +34,7 @@ export function useGeolocation(): GeolocationState {
   const watchId = useRef<number | null>(null);
   const watchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bestAcc = useRef<number>(Infinity);
+  const retried = useRef(false); // one fresh retry per request() when the fix is poor
 
   const stopWatch = useCallback(() => {
     if (watchId.current != null && typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -78,13 +81,29 @@ export function useGeolocation(): GeolocationState {
     }
     stopWatch();
     bestAcc.current = Infinity;
+    retried.current = false;
     setStatus('prompting');
+
+    // Adopt the fix, then: if it's poor (>500m) retry ONCE with a fresh read;
+    // otherwise, if not yet within 100m, refine via watchPosition.
+    const handle = (pos: GeolocationPosition) => {
+      accept(pos);
+      const acc = pos.coords.accuracy ?? Infinity;
+      if (acc > POOR_ACCURACY_M && !retried.current) {
+        retried.current = true;
+        try {
+          navigator.geolocation.getCurrentPosition(handle, () => {}, GEO_OPTS);
+        } catch {
+          /* ignore — the first fix still stands */
+        }
+      } else if (acc > GOOD_ENOUGH_M) {
+        startWatch();
+      }
+    };
+
     try {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          accept(pos);
-          if ((pos.coords.accuracy ?? Infinity) > GOOD_ENOUGH_M) startWatch(); // refine
-        },
+        handle,
         (err) => setStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable'),
         GEO_OPTS
       );

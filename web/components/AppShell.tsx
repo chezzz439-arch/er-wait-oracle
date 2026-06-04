@@ -153,6 +153,7 @@ export default function AppShell() {
               onHover={setActiveFacilityId}
               onSelect={focusOn}
               onOpenDetail={openDetail}
+              onLocate={geo.request}
             />
           </div>
         </div>

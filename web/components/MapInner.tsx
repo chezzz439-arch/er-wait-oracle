@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Tooltip, Popup, ZoomControl, Circle, useMap } from 'react-leaflet';
 import clsx from 'clsx';
-import { CheckCircle2, ArrowRight } from 'lucide-react';
+import { CheckCircle2, ArrowRight, LocateFixed } from 'lucide-react';
 import { BusyScoreRing, BusyLevelPill, ConfidenceMeter } from './primitives';
 import NavigateButton from './NavigateButton';
 import { useTheme } from './ThemeProvider';
@@ -95,10 +95,22 @@ function CenterController({ center }: { center: LatLng | null }) {
       first.current = false;
       map.setView([center.lat, center.lng], Math.max(map.getZoom(), 12));
     } else {
-      map.flyTo([center.lat, center.lng], Math.max(map.getZoom(), 12), { duration: 0.8 });
+      // location sharpened (e.g. IP → precise GPS) — fly in and zoom closer.
+      map.flyTo([center.lat, center.lng], Math.max(map.getZoom(), 14), { duration: 0.8 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+  return null;
+}
+
+// Flies back to the user's location when the recenter button is tapped.
+function RecenterController({ target, nonce }: { target: LatLng | null; nonce: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (nonce === 0 || !target) return;
+    map.flyTo([target.lat, target.lng], Math.max(map.getZoom(), 14), { duration: 0.7 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce]);
   return null;
 }
 
@@ -197,6 +209,7 @@ export default function MapInner({
   onHover,
   onSelect,
   onOpenDetail,
+  onLocate,
 }: {
   hospitals: HospitalView[];
   recommendedId: string | null;
@@ -208,8 +221,10 @@ export default function MapInner({
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;
+  onLocate: () => void;
 }) {
   const [spotlight, setSpotlight] = useState<BusyLevel | null>(null);
+  const [recenterNonce, setRecenterNonce] = useState(0);
   const markerRefs = useRef<Record<string, L.Marker | null>>({});
   const byId = useMemo(() => new Map(hospitals.map((h) => [h.facilityId, h])), [hospitals]);
   const { theme } = useTheme();
@@ -237,6 +252,7 @@ export default function MapInner({
         <ZoomControl position="bottomright" />
         <InvalidateOnResize />
         <CenterController center={center} />
+        <RecenterController target={userLoc ?? center} nonce={recenterNonce} />
         <FocusController focusReq={focusReq} byId={byId} markerRefs={markerRefs} />
 
         {userLoc && (
@@ -299,6 +315,19 @@ export default function MapInner({
       <div className="pointer-events-none absolute right-3 top-3 z-[500] rounded-full bg-surface/90 px-3 py-1 text-[0.7rem] font-semibold text-ink shadow-float backdrop-blur">
         Forecast · next 4 hours
       </div>
+
+      {/* Recenter on the user's location — sits above the zoom control */}
+      <button
+        onClick={() => {
+          if (!userLoc) onLocate(); // not located yet → request, then CenterController flies in
+          setRecenterNonce((n) => n + 1);
+        }}
+        title={userLoc ? 'Recenter on my location' : 'Find my location'}
+        aria-label="Recenter on my location"
+        className="absolute bottom-20 right-3 z-[600] grid h-9 w-9 place-items-center rounded-full border border-hairline bg-surface/95 text-accent shadow-float backdrop-blur transition hover:bg-surfaceAlt active:scale-95"
+      >
+        <LocateFixed size={18} />
+      </button>
 
       {/* Legend — bottom-left inside map, click a band to spotlight */}
       <div className="absolute bottom-3 left-3 z-[500] rounded-xl border border-hairline bg-surface/90 p-2.5 shadow-float backdrop-blur">

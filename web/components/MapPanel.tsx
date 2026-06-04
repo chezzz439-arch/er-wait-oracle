@@ -25,6 +25,7 @@ export default function MapPanel(props: {
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;
+  onLocate: () => void;
 }) {
   return (
     <div className="h-full w-full overflow-hidden rounded-2xl shadow-card">
