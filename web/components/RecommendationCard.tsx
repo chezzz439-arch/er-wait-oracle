@@ -1,9 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { Compass, Clock, Lightbulb, ArrowRight, Info, Navigation, ChevronDown } from 'lucide-react';
+import { Compass, Clock, Lightbulb, ArrowRight, Info, ChevronDown, MapPin } from 'lucide-react';
 import { BusyScoreRing, BusyLevelPill, ConfidenceMeter, KeyFactorChips } from './primitives';
+import NavigateButton from './NavigateButton';
 import { LEVEL_HEX } from '@/lib/theme';
-import { mapsDirectionsUrl, type LatLng } from '@/lib/geo';
+import { formatMiles, type LatLng } from '@/lib/geo';
 import type { HospitalView, Recommendation } from '@/lib/types';
 
 export default function RecommendationCard({
@@ -12,6 +13,7 @@ export default function RecommendationCard({
   cityAvg,
   notice,
   userLoc,
+  located,
   onViewOnMap,
   onViewDetails,
 }: {
@@ -20,6 +22,7 @@ export default function RecommendationCard({
   cityAvg: number | null;
   notice: string | null;
   userLoc: LatLng | null;
+  located: boolean;
   onViewOnMap: () => void;
   onViewDetails: () => void;
 }) {
@@ -48,7 +51,6 @@ export default function RecommendationCard({
   const delta = cityAvg != null ? Math.round(cityAvg - recommendation.busyScore) : null;
   const reasoningDistinct =
     recommendation.reasoning && recommendation.reasoning.trim() !== recommendation.rationale.trim();
-  const navUrl = mapsDirectionsUrl({ lat: pick.lat, lng: pick.lng, label: pick.name }, userLoc);
 
   return (
     <section
@@ -88,10 +90,19 @@ export default function RecommendationCard({
 
         {/* (4) Justifier */}
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+          {located && recommendation.distanceMiles != null && (
+            <div className="flex items-center gap-1.5">
+              <MapPin size={15} className="text-accent" />
+              <span className="nums text-[0.875rem] font-semibold text-ink">
+                {formatMiles(recommendation.distanceMiles)}
+              </span>
+              <span className="text-[0.75rem] text-muted">away</span>
+            </div>
+          )}
           {delta != null && delta > 0 && (
             <div className="flex items-baseline gap-1.5">
               <span className="nums text-xl font-extrabold text-busyLow">−{delta}</span>
-              <span className="text-[0.75rem] font-medium text-muted">vs SF average</span>
+              <span className="text-[0.75rem] font-medium text-muted">vs nearby avg</span>
             </div>
           )}
           {recommendation.etaMinutes != null && (
@@ -143,14 +154,13 @@ export default function RecommendationCard({
 
         {/* (8) Actions */}
         <div className="mt-3.5 flex items-center gap-2">
-          <a
-            href={navUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-accent px-4 py-2.5 text-[0.85rem] font-semibold text-white shadow-card transition hover:brightness-95 active:scale-[0.98]"
-          >
-            <Navigation size={15} /> Navigate
-          </a>
+          <div className="flex-1">
+            <NavigateButton
+              dest={{ lat: pick.lat, lng: pick.lng, label: pick.name }}
+              origin={userLoc}
+              fullWidth
+            />
+          </div>
           <button
             onClick={onViewDetails}
             className="flex shrink-0 items-center gap-1.5 rounded-full border border-hairline px-3.5 py-2.5 text-[0.8rem] font-semibold text-ink transition hover:bg-surfaceAlt"

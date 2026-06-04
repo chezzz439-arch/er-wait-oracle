@@ -3,12 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Tooltip, Popup, ZoomControl, useMap } from 'react-leaflet';
 import clsx from 'clsx';
-import { CheckCircle2, Navigation, ArrowRight } from 'lucide-react';
+import { CheckCircle2, ArrowRight } from 'lucide-react';
 import { BusyScoreRing, BusyLevelPill, ConfidenceMeter } from './primitives';
+import NavigateButton from './NavigateButton';
 import { useTheme } from './ThemeProvider';
 import { SF_CENTER, SF_DEFAULT_ZOOM } from '@/lib/hospitals';
 import { LEVEL_HEX, LEVEL_LABEL } from '@/lib/theme';
-import { mapsDirectionsUrl, type LatLng } from '@/lib/geo';
+import type { LatLng } from '@/lib/geo';
 import type { BusyLevel, HospitalView } from '@/lib/types';
 
 export interface FocusRequest {
@@ -83,6 +84,24 @@ function FocusController({
   return null;
 }
 
+// Recenters the map when the active location (user GPS / default) changes.
+function CenterController({ center }: { center: LatLng | null }) {
+  const map = useMap();
+  const key = center ? `${center.lat.toFixed(4)},${center.lng.toFixed(4)}` : '';
+  const first = useRef(true);
+  useEffect(() => {
+    if (!center) return;
+    if (first.current) {
+      first.current = false;
+      map.setView([center.lat, center.lng], Math.max(map.getZoom(), 12));
+    } else {
+      map.flyTo([center.lat, center.lng], Math.max(map.getZoom(), 12), { duration: 0.8 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return null;
+}
+
 // Keeps the Leaflet canvas sized correctly through layout/breakpoint changes.
 function InvalidateOnResize() {
   const map = useMap();
@@ -114,7 +133,6 @@ function MarkerPopup({
   onOpenDetail: (id: string) => void;
 }) {
   const noBaseline = h.baseline.op18b == null;
-  const navUrl = mapsDirectionsUrl({ lat: h.lat, lng: h.lng, label: h.name }, userLoc);
   return (
     <div className="w-[230px]">
       <div className="flex items-start justify-between gap-2">
@@ -155,14 +173,7 @@ function MarkerPopup({
       </div>
       <div className="mt-2.5 flex items-center gap-2">
         {h.hasEd && (
-          <a
-            href={navUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-[0.7rem] font-semibold text-white transition hover:brightness-95"
-          >
-            <Navigation size={12} /> Navigate
-          </a>
+          <NavigateButton dest={{ lat: h.lat, lng: h.lng, label: h.name }} origin={userLoc} variant="compact" />
         )}
         <button
           onClick={() => onOpenDetail(h.facilityId)}
@@ -181,6 +192,7 @@ export default function MapInner({
   activeFacilityId,
   focusReq,
   userLoc,
+  center,
   onHover,
   onSelect,
   onOpenDetail,
@@ -190,6 +202,7 @@ export default function MapInner({
   activeFacilityId: string | null;
   focusReq: FocusRequest;
   userLoc: LatLng | null;
+  center: LatLng | null;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;
@@ -221,6 +234,7 @@ export default function MapInner({
         />
         <ZoomControl position="bottomright" />
         <InvalidateOnResize />
+        <CenterController center={center} />
         <FocusController focusReq={focusReq} byId={byId} markerRefs={markerRefs} />
 
         {userLoc && (

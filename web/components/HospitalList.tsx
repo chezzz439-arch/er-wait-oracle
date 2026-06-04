@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import { ArrowUpDown, CircleAlert, MapPin, Locate, ChevronRight } from 'lucide-react';
 import { BusyLevelPill } from './primitives';
 import { LEVEL_HEX } from '@/lib/theme';
-import { haversineMiles, formatMiles, type LatLng } from '@/lib/geo';
+import { formatMiles } from '@/lib/geo';
 import type { HospitalView } from '@/lib/types';
 
 type SortMode = 'score' | 'name' | 'distance';
@@ -89,7 +89,7 @@ export default function HospitalList({
   hospitals,
   activeFacilityId,
   recommendedId,
-  userLoc,
+  located,
   geoStatus,
   onLocate,
   onHover,
@@ -98,39 +98,29 @@ export default function HospitalList({
   hospitals: HospitalView[];
   activeFacilityId: string | null;
   recommendedId: string | null;
-  userLoc: LatLng | null;
+  located: boolean;
   geoStatus: string;
   onLocate: () => void;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
 }) {
-  const [sort, setSort] = useState<SortMode>('score');
-
-  // When location becomes available, default to distance sort for a useful order.
-  const effectiveSort: SortMode = sort === 'distance' && !userLoc ? 'score' : sort;
-
-  const distById = useMemo(() => {
-    const m = new Map<string, number>();
-    if (userLoc) for (const h of hospitals) m.set(h.facilityId, haversineMiles(userLoc, { lat: h.lat, lng: h.lng }));
-    return m;
-  }, [hospitals, userLoc]);
+  // Default to distance order once we have a real location — it's the useful one.
+  const [sort, setSort] = useState<SortMode>('distance');
+  const effectiveSort: SortMode = sort === 'distance' && !located ? 'score' : sort;
 
   const sorted = useMemo(() => {
     const arr = [...hospitals];
     if (effectiveSort === 'score') arr.sort((a, b) => a.prediction.busyScore - b.prediction.busyScore);
     else if (effectiveSort === 'name') arr.sort((a, b) => a.shortName.localeCompare(b.shortName));
-    else
-      arr.sort(
-        (a, b) => (distById.get(a.facilityId) ?? 1e9) - (distById.get(b.facilityId) ?? 1e9)
-      );
+    else arr.sort((a, b) => (a.distanceMiles ?? 1e9) - (b.distanceMiles ?? 1e9));
     return arr;
-  }, [hospitals, effectiveSort, distById]);
+  }, [hospitals, effectiveSort]);
 
   const cycleSort = () => {
     setSort((s) => {
+      if (s === 'distance') return 'score';
       if (s === 'score') return 'name';
-      if (s === 'name') return userLoc ? 'distance' : 'score';
-      return 'score';
+      return located ? 'distance' : 'score';
     });
   };
   const sortLabel = effectiveSort === 'score' ? 'Score' : effectiveSort === 'name' ? 'Name' : 'Distance';
@@ -140,19 +130,20 @@ export default function HospitalList({
       {/* Fixed header; the rows below scroll within this panel */}
       <div className="mb-1.5 flex items-center justify-between gap-2 px-2 py-1">
         <span className="truncate text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted">
-          All {hospitals.length} ERs · least busy first
+          {located ? `${hospitals.length} nearest ERs` : `${hospitals.length} ERs`} ·{' '}
+          {effectiveSort === 'distance' ? 'closest first' : 'least busy first'}
         </span>
         <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={onLocate}
             className={clsx(
               'flex items-center gap-1 rounded-full px-2 py-1 text-[0.68rem] font-medium transition',
-              userLoc ? 'text-accent' : 'text-muted hover:bg-surfaceAlt'
+              located ? 'text-accent' : 'text-muted hover:bg-surfaceAlt'
             )}
-            title={userLoc ? 'Using your location' : 'Show distances from your location'}
+            title={located ? 'Using your location' : 'Show distances from your location'}
           >
             <Locate size={12} />
-            {userLoc ? 'Located' : geoStatus === 'prompting' ? 'Locating…' : 'Near me'}
+            {located ? 'Located' : geoStatus === 'prompting' ? 'Locating…' : 'Near me'}
           </button>
           <button
             onClick={cycleSort}
@@ -176,7 +167,7 @@ export default function HospitalList({
             rank={i + 1}
             active={activeFacilityId === h.facilityId}
             recommended={recommendedId === h.facilityId}
-            distanceMi={distById.get(h.facilityId) ?? null}
+            distanceMi={located ? h.distanceMiles : null}
             onHover={() => onHover(h.facilityId)}
             onLeave={() => onHover(null)}
             onSelect={() => onSelect(h.facilityId)}

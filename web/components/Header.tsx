@@ -8,6 +8,7 @@ import type { WeatherView } from '@/lib/types';
 
 export default function Header({
   weather,
+  locationLabel,
   lastUpdated,
   onRefresh,
   syncTick,
@@ -15,6 +16,7 @@ export default function Header({
   selectedId,
 }: {
   weather: WeatherView | null;
+  locationLabel: string | null;
   lastUpdated: number | null;
   onRefresh: () => void;
   syncTick: number;
@@ -41,7 +43,9 @@ export default function Header({
         </span>
         <div className="min-w-0 leading-tight">
           <div className="truncate text-[1.05rem] font-bold tracking-[-0.011em] text-ink">ER Wait Oracle</div>
-          <div className="hidden text-[0.68rem] font-medium text-muted min-[400px]:block">San Francisco · next 4 hours</div>
+          <div className="hidden truncate text-[0.68rem] font-medium text-muted min-[400px]:block">
+            {locationLabel ?? 'United States'} · next 4 hours
+          </div>
         </div>
       </div>
 

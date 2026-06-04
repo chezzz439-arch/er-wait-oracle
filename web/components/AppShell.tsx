@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, Info } from 'lucide-react';
 import Header from './Header';
 import MapPanel from './MapPanel';
 import RecommendationCard from './RecommendationCard';
@@ -11,11 +11,19 @@ import IncidentFeed from './IncidentFeed';
 import HospitalDetail from './HospitalDetail';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useGeolocation } from '@/hooks/useGeolocation';
+import { useWeather } from '@/hooks/useWeather';
 import type { FocusRequest } from './MapInner';
 
 export default function AppShell() {
-  const { data, loading, error, lastUpdated, syncTick, refresh } = useDashboard();
   const geo = useGeolocation();
+  const { data, loading, error, lastUpdated, syncTick, refresh } = useDashboard(geo.coords);
+
+  // Ask for the user's live location once on load — the whole experience is
+  // built around finding the nearest ERs to wherever they are.
+  useEffect(() => {
+    geo.request();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [activeFacilityId, setActiveFacilityId] = useState<string | null>(null); // hover/highlight
   const [focusedId, setFocusedId] = useState<string | null>(null); // last clicked (persists, shared)
@@ -25,6 +33,13 @@ export default function AppShell() {
   const hospitals = data?.hospitals ?? [];
   const recommendation = data?.recommendation ?? null;
   const recommendedId = recommendation?.facilityId ?? null;
+  const located = data?.location?.source === 'gps';
+  const mapCenter = data?.location ? { lat: data.location.lat, lng: data.location.lng } : null;
+
+  // Weather is fetched client-side (browser → Open-Meteo, CORS, near the user) so
+  // it loads reliably on Vercel; the server payload weather is a fallback.
+  const clientWeather = useWeather(geo.coords ?? mapCenter);
+  const weather = clientWeather ?? data?.weather ?? null;
 
   const focusOn = useCallback((id: string) => {
     setActiveFacilityId(id);
@@ -78,7 +93,7 @@ export default function AppShell() {
       <div className="grid h-[100dvh] place-items-center bg-bg">
         <div className="flex flex-col items-center gap-3 text-muted">
           <div className="h-3 w-3 animate-pulseDot rounded-full bg-accent" />
-          <span className="text-sm">Consulting the Oracle…</span>
+          <span className="text-sm">Finding ERs near you…</span>
         </div>
       </div>
     );
@@ -87,7 +102,8 @@ export default function AppShell() {
   return (
     <div className="flex min-h-[100dvh] flex-col bg-bg text-ink">
       <Header
-        weather={data?.weather ?? null}
+        weather={weather}
+        locationLabel={data?.location?.label ?? null}
         lastUpdated={lastUpdated}
         onRefresh={refresh}
         syncTick={syncTick}
@@ -111,6 +127,7 @@ export default function AppShell() {
               activeFacilityId={activeFacilityId}
               focusReq={focusReq}
               userLoc={geo.coords}
+              center={mapCenter}
               onHover={setActiveFacilityId}
               onSelect={focusOn}
               onOpenDetail={openDetail}
@@ -126,6 +143,7 @@ export default function AppShell() {
             cityAvg={cityAvg}
             notice={data?.notice ?? null}
             userLoc={geo.coords}
+            located={located}
             onViewOnMap={() => recommendedId && focusOn(recommendedId)}
             onViewDetails={() => recommendedId && openDetail(recommendedId)}
           />
@@ -147,7 +165,7 @@ export default function AppShell() {
             hospitals={hospitals}
             activeFacilityId={activeFacilityId}
             recommendedId={recommendedId}
-            userLoc={geo.coords}
+            located={located}
             geoStatus={geo.status}
             onLocate={geo.request}
             onHover={setActiveFacilityId}
@@ -155,6 +173,18 @@ export default function AppShell() {
           />
         </div>
       </main>
+
+      {/* Subtle data-sources disclaimer */}
+      <footer className="mx-auto w-full max-w-[1500px] px-4 pb-6 pt-1 sm:px-5">
+        <p className="flex items-start gap-1.5 text-[0.66rem] leading-relaxed text-muted/80">
+          <Info size={12} className="mt-0.5 shrink-0" />
+          <span>
+            Predictions based on CMS historical ED data + live weather + time-of-day modeling.{' '}
+            <span className="font-medium">Not a live wait-time feed.</span> Hospital locations are
+            ZIP-code approximate; wait, ambulance and bed figures are simulated estimates.
+          </span>
+        </p>
+      </footer>
 
       {detailHospital && (
         <HospitalDetail

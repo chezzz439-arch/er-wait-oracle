@@ -1,10 +1,11 @@
 // Simulated incident feed.
 //
-// Real-time event/EMS feeds aren't public, so this synthesizes PLAUSIBLE SF
+// Real-time event/EMS feeds aren't public, so this synthesizes PLAUSIBLE
 // situational drivers from the current time, day, season and live weather, and
-// ties each to the ERs nearest the action. Every card is labeled "Simulated" in
-// the UI. Deterministic for a given moment (no randomness) so it's stable across
-// the 5-minute polling window.
+// ties each to the ERs nearest the user. SF-specific venue copy (Giants/Warriors)
+// only appears when the user is actually near San Francisco; elsewhere the feed
+// uses location-neutral weather/time drivers. Every card is labeled "Simulated"
+// in the UI. Deterministic for a given moment (no randomness).
 import type { WeatherView } from './types';
 
 export interface Incident {
@@ -16,12 +17,10 @@ export interface Incident {
   nearFacilityIds: string[];
 }
 
-// Facility ids (from lib/hospitals) referenced by name for readability.
-const ZSF = '050228'; // ZSF General — closest to Oracle Park / Chase Center / SoMa
-const MISSION = '050055'; // CPMC Mission Bernal — Mission district
-const DAVIES = '050008'; // CPMC Davies — Castro / Duboce
-const VANNESS = '050047'; // CPMC Van Ness — downtown / Tenderloin edge
-const STFRANCIS = '050152'; // UCSF St. Francis — Nob Hill / Tenderloin
+export interface IncidentContext {
+  nearSF: boolean;
+  nearbyIds: string[]; // ids of the closest few ERs, for "near" tags
+}
 
 interface SfParts {
   hour: number;
@@ -29,9 +28,8 @@ interface SfParts {
   month: number; // 1..12
 }
 
-function sfParts(now: Date): SfParts {
+function localParts(now: Date): SfParts {
   const p = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
     hour: 'numeric',
     weekday: 'short',
     month: 'numeric',
@@ -46,49 +44,54 @@ function sfParts(now: Date): SfParts {
   };
 }
 
-export function buildIncidents(now: Date, weather: WeatherView | null): Incident[] {
-  const { hour, weekday, month } = sfParts(now);
+export function buildIncidents(
+  now: Date,
+  weather: WeatherView | null,
+  ctx: IncidentContext = { nearSF: true, nearbyIds: [] }
+): Incident[] {
+  const { hour, weekday, month } = localParts(now);
   const isWeekend = weekday === 0 || weekday === 6;
+  const near = ctx.nearbyIds;
   const out: Incident[] = [];
 
-  // ── Giants baseball (Apr–Sep, Oracle Park) ────────────────────────────────
-  const baseballSeason = month >= 4 && month <= 9;
-  const eveningGameLetout = hour >= 21 && hour <= 23;
-  const weekendDayGame = isWeekend && hour >= 15 && hour <= 17;
-  if (baseballSeason && (eveningGameLetout || weekendDayGame)) {
-    out.push({
-      id: 'giants',
-      kind: 'event',
-      title: 'Giants game letting out at Oracle Park',
-      detail: '40K+ crowd dispersing through SoMa — expect a 2–3 hr bump in nearby ERs.',
-      severity: 'elevated',
-      nearFacilityIds: [ZSF, MISSION],
-    });
+  // ── SF-specific big-venue events (only when actually near SF) ─────────────
+  if (ctx.nearSF) {
+    const baseballSeason = month >= 4 && month <= 9;
+    const eveningGameLetout = hour >= 21 && hour <= 23;
+    const weekendDayGame = isWeekend && hour >= 15 && hour <= 17;
+    if (baseballSeason && (eveningGameLetout || weekendDayGame)) {
+      out.push({
+        id: 'giants',
+        kind: 'event',
+        title: 'Giants game letting out at Oracle Park',
+        detail: '40K+ crowd dispersing through SoMa — expect a 2–3 hr bump in nearby ERs.',
+        severity: 'elevated',
+        nearFacilityIds: near.slice(0, 2),
+      });
+    }
+    const nbaSeason = month >= 10 || month <= 4;
+    if (nbaSeason && hour >= 21 && hour <= 23 && !out.find((i) => i.id === 'giants')) {
+      out.push({
+        id: 'warriors',
+        kind: 'event',
+        title: 'Warriors game wrapping at Chase Center',
+        detail: 'Mission Bay crowds heading out — minor surge likely near the waterfront ERs.',
+        severity: 'watch',
+        nearFacilityIds: near.slice(0, 2),
+      });
+    }
   }
 
-  // ── Warriors basketball (Oct–Apr, Chase Center) ───────────────────────────
-  const nbaSeason = month >= 10 || month <= 4;
-  if (nbaSeason && hour >= 21 && hour <= 23 && !out.find((i) => i.id === 'giants')) {
-    out.push({
-      id: 'warriors',
-      kind: 'event',
-      title: 'Warriors game wrapping at Chase Center',
-      detail: 'Mission Bay crowds heading out — minor surge likely near the waterfront ERs.',
-      severity: 'watch',
-      nearFacilityIds: [ZSF, MISSION],
-    });
-  }
-
-  // ── Weekend nightlife (Fri/Sat late) ──────────────────────────────────────
+  // ── Weekend nightlife (location-neutral) ──────────────────────────────────
   const fridayOrSat = weekday === 5 || weekday === 6;
   if (fridayOrSat && (hour >= 22 || hour <= 2)) {
     out.push({
       id: 'nightlife',
       kind: 'nightlife',
-      title: 'Peak nightlife hours in SoMa & the Mission',
-      detail: 'Bars at capacity — alcohol-related visits typically climb after midnight.',
+      title: 'Peak nightlife hours',
+      detail: 'Bars and venues at capacity — alcohol-related visits typically climb after midnight.',
       severity: 'watch',
-      nearFacilityIds: [ZSF, MISSION, DAVIES],
+      nearFacilityIds: near.slice(0, 3),
     });
   }
 
@@ -97,50 +100,59 @@ export function buildIncidents(now: Date, weather: WeatherView | null): Incident
     out.push({
       id: 'rain',
       kind: 'weather',
-      title: 'Active rain across the city',
-      detail: 'Slick roads raise collision and fall volume — load rising city-wide.',
+      title: 'Active rain in your area',
+      detail: 'Slick roads raise collision and fall volume — load rising nearby.',
       severity: 'elevated',
-      nearFacilityIds: [ZSF, VANNESS],
+      nearFacilityIds: near.slice(0, 2),
     });
-  } else if ((weather?.temperatureF ?? 60) < 46) {
+  } else if ((weather?.temperatureF ?? 60) < 36) {
     out.push({
       id: 'cold',
       kind: 'weather',
-      title: 'Cold snap overnight',
+      title: 'Cold conditions',
       detail: 'Respiratory and cardiac presentations tend to tick up in the cold.',
       severity: 'watch',
-      nearFacilityIds: [STFRANCIS, VANNESS],
+      nearFacilityIds: near.slice(0, 2),
+    });
+  } else if ((weather?.temperatureF ?? 70) > 95) {
+    out.push({
+      id: 'heat',
+      kind: 'weather',
+      title: 'Heat advisory conditions',
+      detail: 'High temperatures drive heat-illness and dehydration visits — load climbing.',
+      severity: 'elevated',
+      nearFacilityIds: near.slice(0, 2),
     });
   } else if (weather?.weatherCode === 45 || weather?.weatherCode === 48) {
     out.push({
       id: 'fog',
       kind: 'weather',
       title: 'Dense fog advisory',
-      detail: 'Reduced visibility on the bridges and 19th Ave — watch for traffic injuries.',
+      detail: 'Reduced visibility on area roads — watch for traffic injuries.',
       severity: 'info',
-      nearFacilityIds: [STFRANCIS],
+      nearFacilityIds: near.slice(0, 1),
     });
   }
 
-  // ── Weekday rush-hour traffic ─────────────────────────────────────────────
+  // ── Weekday rush-hour traffic (location-neutral) ──────────────────────────
   if (!isWeekend && hour >= 16 && hour <= 19) {
     out.push({
       id: 'rush',
       kind: 'traffic',
-      title: 'Evening rush hour on the 101 & 280',
+      title: 'Evening rush hour',
       detail: 'Heavier traffic means more collision-related arrivals at trauma-capable ERs.',
       severity: 'info',
-      nearFacilityIds: [ZSF],
+      nearFacilityIds: near.slice(0, 1),
     });
   }
 
-  // ── Quiet-period reassurance (nothing else fired) ─────────────────────────
+  // ── Quiet-period reassurance ──────────────────────────────────────────────
   if (!out.length) {
     out.push({
       id: 'calm',
-      kind: 'info' as Incident['kind'],
+      kind: 'seasonal',
       title: 'No major situational drivers right now',
-      detail: 'No games, storms or rush-hour spikes detected — loads reflect baseline patterns.',
+      detail: 'No big events, storms or rush-hour spikes detected — loads reflect baseline patterns.',
       severity: 'info',
       nearFacilityIds: [],
     });

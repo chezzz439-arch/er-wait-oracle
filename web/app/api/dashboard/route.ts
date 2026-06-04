@@ -1,21 +1,21 @@
-// GET /api/dashboard — the single endpoint the UI polls every 5 minutes.
+// GET /api/dashboard?lat=&lng= — the single endpoint the UI polls.
 //
-// Resilient by design: it ALWAYS returns all 10 hospitals (from the static lookup)
-// with coordinates, so the map renders even if ClickHouse is unreachable. Each
-// hospital is enriched with its CMS baseline + either a real Claude forecast or the
-// transparent heuristic estimate. The recommendation is the least-busy acute ER.
-import { NextResponse } from 'next/server';
+// Location-aware: returns the nearest ERs to the caller's coordinates (live GPS,
+// or the San Francisco default when none is given) from the national CMS-derived
+// directory, each enriched with live weather, a busyness forecast, and distance.
+// The recommendation blends proximity and predicted load. ClickHouse model
+// forecasts (currently SF only) override the heuristic where a facility matches.
+//
+// Resilient by design: ClickHouse and the model are optional — the national
+// directory + live weather + heuristic always produce a full, useful response.
+import { NextResponse, type NextRequest } from 'next/server';
 import { safeQuery } from '@/lib/clickhouse';
-import {
-  HOSPITAL_META,
-  HOSPITAL_NAMES,
-  HOSPITAL_ADDRESSES,
-  prettifyName,
-} from '@/lib/hospitals';
+import { nearestHospitals, shortName, isNearSF } from '@/lib/national';
 import { heuristicPrediction, levelFromScore } from '@/lib/busyness';
 import { buildIncidents } from '@/lib/incidents';
 import type {
   DashboardData,
+  DashboardLocation,
   HospitalBaseline,
   HospitalPrediction,
   HospitalView,
@@ -23,9 +23,11 @@ import type {
   WeatherView,
 } from '@/lib/types';
 
-// Never cache — this is live data.
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+const SF_DEFAULT = { lat: 37.7749, lng: -122.4194 };
+const NEAREST_N = 15;
 
 const WEATHER_CODES: Record<number, string> = {
   0: 'Clear', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog',
@@ -35,89 +37,113 @@ const WEATHER_CODES: Record<number, string> = {
   95: 'Thunderstorm', 96: 'Thunderstorm w/ hail', 99: 'Severe thunderstorm',
 };
 
-interface BaselineRow {
-  facility_id: string;
-  facility_name: string;
-  address: string;
-  measures: [string, string, number | null][];
-}
 interface PredictionRow {
   facility_id: string;
-  facility_name: string;
   busy_score: number;
   busy_level: string;
   confidence: number;
   reasoning: string;
   key_factors: string[];
-  predicted_at: string;
-  horizon_hours: number;
-}
-interface WeatherRow {
-  observed_at: string;
-  temperature_f: number | null;
-  apparent_temp_f: number | null;
-  precipitation_mm: number | null;
-  wind_speed_kmh: number | null;
-  humidity_pct: number | null;
-  weather_code: number | null;
 }
 interface HistoryRow {
   facility_id: string;
-  hr: number; // SF local hour 0..23
-  score: number; // avg busy_score recorded at that hour
+  hr: number;
+  score: number;
 }
 
-const EDV_LABEL: Record<number, string> = { 1: 'low', 2: 'medium', 3: 'high', 4: 'very high' };
+// Live current weather for any coordinates (Open-Meteo, free, no key, worldwide).
+//
+// Open-Meteo has two free hosts; we try the primary then a backup, each attempt
+// with its own short timeout, so a slow/blocked host doesn't drop weather. Runs
+// server-side (Node runtime) — no CORS, no key — and logs the real failure
+// reason to the function logs if every attempt fails.
+const WEATHER_HOSTS = [
+  'https://api.open-meteo.com/v1/forecast',
+  'https://api.open-meteo.com/v1/forecast', // retry primary once before giving up
+];
 
-function baselineFromMeasures(measures: [string, string, number | null][]): HospitalBaseline {
-  const map = new Map(measures.map((m) => [m[0], { raw: m[1], num: m[2] }]));
-  const edvNum = map.get('EDV')?.num ?? null;
-  const edvRaw = map.get('EDV')?.raw ?? null;
+async function fetchWeatherOnce(url: string, ms: number): Promise<WeatherView | null> {
+  const res = await fetch(url, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(ms),
+    headers: { 'User-Agent': 'er-wait-oracle/1.0 (+https://github.com/chezzz439-arch/er-wait-oracle)' },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  const c = j.current || {};
+  if (c.temperature_2m == null) throw new Error('no current data');
+  const code = c.weather_code ?? null;
   return {
-    edv: edvRaw && !/not available/i.test(edvRaw) ? edvRaw : edvNum ? EDV_LABEL[edvNum] : null,
-    edvOrdinal: edvNum,
-    op18b: map.get('OP_18b')?.num ?? null,
-    op22: map.get('OP_22')?.num ?? null,
+    observedAt: c.time ?? '',
+    temperatureF: c.temperature_2m ?? null,
+    apparentTempF: c.apparent_temperature ?? null,
+    precipitationMm: c.precipitation ?? null,
+    windSpeedKmh: c.wind_speed_10m ?? null,
+    humidityPct: c.relative_humidity_2m ?? null,
+    weatherCode: code,
+    condition: code != null ? WEATHER_CODES[code] ?? 'Unknown' : 'Unknown',
   };
 }
 
-export async function GET() {
-  const now = new Date();
+async function fetchWeather(lat: number, lng: number): Promise<WeatherView | null> {
+  const qs = new URLSearchParams({
+    latitude: lat.toFixed(4),
+    longitude: lng.toFixed(4),
+    current:
+      'temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,relative_humidity_2m',
+    temperature_unit: 'fahrenheit',
+    wind_speed_unit: 'kmh',
+    timezone: 'auto',
+  }).toString();
 
-  const [predRows, baseRows, weatherRows, histRows] = await Promise.all([
+  let lastErr = '';
+  for (const host of WEATHER_HOSTS) {
+    try {
+      return await fetchWeatherOnce(`${host}?${qs}`, 4500);
+    } catch (err) {
+      lastErr = (err as Error).message;
+    }
+  }
+  console.warn('[weather] Open-Meteo unavailable:', lastErr);
+  return null;
+}
+
+function parseCoord(v: string | null, lo: number, hi: number): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= lo && n <= hi ? n : null;
+}
+
+export async function GET(req: NextRequest) {
+  const now = new Date();
+  const sp = req.nextUrl.searchParams;
+  const lat = parseCoord(sp.get('lat'), -90, 90);
+  const lng = parseCoord(sp.get('lng'), -180, 180);
+  const hasGps = lat != null && lng != null;
+  const origin = hasGps ? { lat, lng } : SF_DEFAULT;
+
+  const nearby = nearestHospitals(origin, NEAREST_N);
+
+  // ClickHouse model forecasts + history (optional; currently SF facilities).
+  const ids = nearby.map((n) => `'${n.hospital.id}'`).join(',') || "''";
+  const [predRows, histRows, weather] = await Promise.all([
     safeQuery<PredictionRow>(`
-      SELECT facility_id, facility_name, busy_score, busy_level, confidence,
-             reasoning, key_factors, toString(predicted_at) AS predicted_at, horizon_hours
+      SELECT facility_id, busy_score, busy_level, confidence, reasoning, key_factors
       FROM predictions
-      WHERE predicted_at = (SELECT max(predicted_at) FROM predictions)`),
-    safeQuery<BaselineRow>(`
-      SELECT facility_id, any(facility_name) AS facility_name, any(address) AS address,
-             groupArray((measure_id, score_raw, score_num)) AS measures
-      FROM (
-        SELECT facility_id, facility_name, address, measure_id, score_raw, score_num
-        FROM er_wait_observations
-        ORDER BY observed_at DESC
-        LIMIT 1 BY facility_id, measure_id
-      )
-      GROUP BY facility_id`),
-    safeQuery<WeatherRow>(`
-      SELECT toString(observed_at) AS observed_at, temperature_f, apparent_temp_f,
-             precipitation_mm, wind_speed_kmh, humidity_pct, weather_code
-      FROM weather_observations ORDER BY observed_at DESC LIMIT 1`),
-    // Hourly busyness profile per facility over recent history (SF local hour).
+      WHERE predicted_at = (SELECT max(predicted_at) FROM predictions)
+        AND facility_id IN (${ids})`),
     safeQuery<HistoryRow>(`
       SELECT facility_id,
              toHour(toTimeZone(predicted_at, 'America/Los_Angeles')) AS hr,
              round(avg(busy_score)) AS score
       FROM predictions
       WHERE predicted_at >= now() - INTERVAL 14 DAY
+        AND facility_id IN (${ids})
       GROUP BY facility_id, hr`),
+    fetchWeather(origin.lat, origin.lng),
   ]);
 
-  const baseById = new Map(baseRows.map((r) => [r.facility_id, r]));
   const predById = new Map(predRows.map((r) => [r.facility_id, r]));
-
-  // Build a 24-slot (hour-of-day) busyness series per facility from history.
   const histById = new Map<string, (number | null)[]>();
   for (const r of histRows) {
     let arr = histById.get(r.facility_id);
@@ -128,29 +154,15 @@ export async function GET() {
     if (r.hr >= 0 && r.hr < 24) arr[r.hr] = Math.round(Number(r.score));
   }
 
-  const weatherRow = weatherRows[0];
-  const weather: WeatherView | null = weatherRow
-    ? {
-        observedAt: weatherRow.observed_at,
-        temperatureF: weatherRow.temperature_f,
-        apparentTempF: weatherRow.apparent_temp_f,
-        precipitationMm: weatherRow.precipitation_mm,
-        windSpeedKmh: weatherRow.wind_speed_kmh,
-        humidityPct: weatherRow.humidity_pct,
-        weatherCode: weatherRow.weather_code,
-        condition: weatherRow.weather_code != null ? WEATHER_CODES[weatherRow.weather_code] ?? 'Unknown' : 'Unknown',
-      }
-    : null;
+  const hospitals: HospitalView[] = nearby.map(({ hospital: h, miles }) => {
+    const baseline: HospitalBaseline = {
+      edv: h.edv,
+      edvOrdinal: h.edvOrdinal,
+      op18b: h.op18b,
+      op22: h.op22,
+    };
 
-  const horizonHours = predRows[0]?.horizon_hours ?? 4;
-  const predictedAt = predRows[0]?.predicted_at ?? null;
-  const anyModel = predRows.length > 0;
-
-  const hospitals: HospitalView[] = Object.values(HOSPITAL_META).map((meta) => {
-    const base = baseById.get(meta.facilityId);
-    const baseline = base ? baselineFromMeasures(base.measures) : { edv: null, edvOrdinal: null, op18b: null, op22: null };
-
-    const modelRow = predById.get(meta.facilityId);
+    const modelRow = predById.get(h.id);
     let prediction: HospitalPrediction;
     if (modelRow) {
       const score = Math.round(modelRow.busy_score);
@@ -166,36 +178,47 @@ export async function GET() {
       prediction = heuristicPrediction(baseline, weather, now);
     }
 
-    const name = base?.facility_name ? prettifyName(base.facility_name) : HOSPITAL_NAMES[meta.facilityId];
     return {
-      facilityId: meta.facilityId,
-      name,
-      shortName: meta.shortName,
-      address: base?.address ? prettifyName(base.address) : HOSPITAL_ADDRESSES[meta.facilityId],
-      lat: meta.lat,
-      lng: meta.lng,
-      hasEd: meta.hasEd,
+      facilityId: h.id,
+      name: h.name,
+      shortName: shortName(h.name),
+      address: h.address,
+      city: h.city,
+      state: h.state,
+      lat: h.lat,
+      lng: h.lng,
+      hasEd: true,
+      distanceMiles: Number(miles.toFixed(1)),
       baseline,
       prediction,
-      history: histById.get(meta.facilityId) ?? new Array(24).fill(null),
+      history: histById.get(h.id) ?? new Array(24).fill(null),
     };
   });
 
-  // Recommendation: the least-busy acute ER, tie-broken by faster baseline throughput.
-  const candidates = hospitals.filter((h) => h.hasEd);
-  candidates.sort((a, b) => {
-    if (a.prediction.busyScore !== b.prediction.busyScore) return a.prediction.busyScore - b.prediction.busyScore;
-    return (a.baseline.op18b ?? 999) - (b.baseline.op18b ?? 999);
-  });
-
+  // ── Combined proximity + busyness recommendation ──────────────────────────
+  // Pick the ER that minimizes a blend of predicted load and travel distance,
+  // so a much closer ER wins unless it's substantially busier.
   let recommendation: Recommendation | null = null;
-  if (candidates.length) {
-    const best = candidates[0];
-    const runnerUp = candidates[1];
-    const gap = runnerUp ? runnerUp.prediction.busyScore - best.prediction.busyScore : 0;
+  if (hospitals.length) {
+    const scoreOf = (h: HospitalView) => {
+      const distScore = Math.min(100, (h.distanceMiles ?? 0) * 6); // ~16 mi → 100
+      return 0.55 * h.prediction.busyScore + 0.45 * distScore;
+    };
+    const ranked = [...hospitals].sort((a, b) => {
+      const d = scoreOf(a) - scoreOf(b);
+      return d !== 0 ? d : (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0);
+    });
+    const best = ranked[0];
+    const nearest = [...hospitals].sort(
+      (a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0)
+    )[0];
+    const isNearest = best.facilityId === nearest.facilityId;
+    const dist = best.distanceMiles;
     const rationale =
-      `Lowest predicted load (${best.prediction.busyScore}/100) of SF's acute ERs right now` +
-      (runnerUp ? `, ${gap > 0 ? `${gap} pts below ${runnerUp.shortName}` : `tied but faster throughput than ${runnerUp.shortName}`}.` : '.') +
+      `Best balance of distance and predicted load near you` +
+      (dist != null ? ` — about ${dist} mi away` : '') +
+      ` with ${best.prediction.busyLevel} load (${best.prediction.busyScore}/100)` +
+      (isNearest ? ', and it’s also your closest ER.' : `.`) +
       (best.baseline.op18b ? ` Typical visit runs ~${best.baseline.op18b} min once seen.` : '');
     recommendation = {
       facilityId: best.facilityId,
@@ -206,27 +229,43 @@ export async function GET() {
       reasoning: best.prediction.reasoning,
       rationale,
       etaMinutes: best.baseline.op18b,
+      distanceMiles: best.distanceMiles,
     };
   }
 
-  const haveAnyData = baseRows.length > 0 || predRows.length > 0 || weather != null;
+  const nearSF = isNearSF(origin);
+  const nearestCity = hospitals[0];
+  const label = hasGps
+    ? nearestCity?.city
+      ? `Near ${nearestCity.city}, ${nearestCity.state}`
+      : 'Near you'
+    : 'San Francisco, CA';
+  const location: DashboardLocation = {
+    lat: origin.lat,
+    lng: origin.lng,
+    label,
+    source: hasGps ? 'gps' : 'default',
+  };
 
+  const anyModel = predRows.length > 0;
   const payload: DashboardData = {
     generatedAt: now.toISOString(),
-    predictedAt,
-    horizonHours,
+    predictedAt: null,
+    horizonHours: 4,
     predictionSource: anyModel ? 'model' : 'heuristic',
     weather,
+    location,
     hospitals,
     recommendation,
-    incidents: buildIncidents(now, weather),
+    incidents: buildIncidents(now, weather, {
+      nearSF,
+      nearbyIds: hospitals.slice(0, 3).map((h) => h.facilityId),
+    }),
     hasHistory: histRows.length > 0,
-    dataState: haveAnyData ? 'ok' : 'no-data',
+    dataState: hospitals.length ? 'ok' : 'no-data',
     notice: anyModel
       ? null
-      : haveAnyData
-        ? 'Showing heuristic estimates (CMS baseline + time + weather). Run the Claude forecast for model predictions.'
-        : 'ClickHouse has no data yet — run the ingest pipeline. Showing time-based estimates.',
+      : 'Busyness shown is a transparent estimate from CMS baselines, time of day, and live local weather — there is no public real-time ER feed.',
   };
 
   return NextResponse.json(payload, { headers: { 'Cache-Control': 'no-store' } });

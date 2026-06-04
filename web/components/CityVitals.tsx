@@ -16,7 +16,7 @@ export default function CityVitals({ hospitals }: { hospitals: HospitalView[] })
     <section className="rounded-2xl bg-surface p-4 shadow-card">
       <div className="mb-2.5 flex items-center justify-between">
         <span className="text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted">
-          SF ER load · {total} departments
+          Nearby ER load · {total} departments
         </span>
         <span className="nums text-[0.72rem] text-muted">avg confidence {avgConf}%</span>
       </div>

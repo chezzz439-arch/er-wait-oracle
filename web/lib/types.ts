@@ -29,9 +29,12 @@ export interface HospitalView {
   name: string; // prettified, Title Case
   shortName: string;
   address: string;
+  city?: string;
+  state?: string;
   lat: number;
   lng: number;
   hasEd: boolean; // false for non-acute facilities (excluded from the recommendation)
+  distanceMiles: number | null; // from the active location (GPS or default), if known
   baseline: HospitalBaseline;
   prediction: HospitalPrediction; // always present (model row or heuristic)
   history: (number | null)[]; // 24 hourly avg busy scores (SF hour 0..23), null = no data
@@ -57,6 +60,15 @@ export interface Recommendation {
   reasoning: string;
   rationale: string; // why THIS one was chosen vs the others
   etaMinutes: number | null; // baseline median throughput, a tangible "expected" number
+  distanceMiles: number | null; // travel distance from the active location
+}
+
+// The location the dashboard is centered on — the user's GPS, or the SF default.
+export interface DashboardLocation {
+  lat: number;
+  lng: number;
+  label: string; // e.g. "San Francisco, CA" or "Near you"
+  source: 'gps' | 'default';
 }
 
 export interface DashboardData {
@@ -65,6 +77,7 @@ export interface DashboardData {
   horizonHours: number;
   predictionSource: BusySource; // 'model' if any hospital has a real forecast
   weather: WeatherView | null;
+  location: DashboardLocation; // where the view is centered (GPS or default)
   hospitals: HospitalView[];
   recommendation: Recommendation | null;
   incidents: Incident[]; // simulated situational drivers (clearly labeled in UI)

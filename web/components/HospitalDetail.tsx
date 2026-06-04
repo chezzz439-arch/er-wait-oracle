@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   X,
-  Navigation,
   Clock,
   Ambulance,
   BedDouble,
@@ -15,9 +14,10 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { BusyScoreRing, BusyLevelPill, ConfidenceMeter, KeyFactorChips } from './primitives';
+import NavigateButton from './NavigateButton';
 import { LEVEL_HEX } from '@/lib/theme';
 import { syntheticOps } from '@/lib/synthetic';
-import { haversineMiles, formatMiles, mapsDirectionsUrl, type LatLng } from '@/lib/geo';
+import { haversineMiles, formatMiles, type LatLng } from '@/lib/geo';
 import { fillSeries, modeledDayCurve, sfHour } from '@/lib/diurnal';
 import type { HospitalView } from '@/lib/types';
 
@@ -83,10 +83,6 @@ export default function HospitalDetail({
   const isModel = hospital.prediction.source === 'model';
 
   const distance = userLoc ? haversineMiles(userLoc, { lat: hospital.lat, lng: hospital.lng }) : null;
-  const navUrl = mapsDirectionsUrl(
-    { lat: hospital.lat, lng: hospital.lng, label: hospital.name },
-    userLoc
-  );
 
   // Close on Escape.
   useEffect(() => {
@@ -211,14 +207,12 @@ export default function HospitalDetail({
                 <span className="nums font-semibold text-ink">{formatMiles(distance)}</span> away
               </div>
             )}
-            <a
-              href={navUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[0.85rem] font-semibold text-white shadow-card transition hover:brightness-95 active:scale-95"
-            >
-              <Navigation size={15} /> Navigate
-            </a>
+            <div className="ml-auto">
+              <NavigateButton
+                dest={{ lat: hospital.lat, lng: hospital.lng, label: hospital.name }}
+                origin={userLoc}
+              />
+            </div>
           </div>
 
           {/* Why this ER */}

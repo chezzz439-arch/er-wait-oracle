@@ -20,6 +20,7 @@ export default function MapPanel(props: {
   activeFacilityId: string | null;
   focusReq: FocusRequest;
   userLoc: LatLng | null;
+  center: LatLng | null;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;

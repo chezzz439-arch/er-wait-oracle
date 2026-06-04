@@ -36,3 +36,14 @@ export function mapsDirectionsUrl(dest: LatLng & { label?: string }, origin?: La
   params.set('travelmode', 'driving');
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
+
+// Apple Maps directions deep-link (opens Maps.app on Apple devices, the web
+// viewer elsewhere). dirflg=d → driving; saddr omitted → "current location".
+export function appleMapsDirectionsUrl(dest: LatLng & { label?: string }, origin?: LatLng | null): string {
+  const params = new URLSearchParams();
+  params.set('daddr', `${dest.lat},${dest.lng}`);
+  if (dest.label) params.set('q', dest.label);
+  if (origin) params.set('saddr', `${origin.lat},${origin.lng}`);
+  params.set('dirflg', 'd');
+  return `https://maps.apple.com/?${params.toString()}`;
+}
