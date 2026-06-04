@@ -41,12 +41,15 @@ export function useGeolocation(): GeolocationState {
         setStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
         inFlight.current = false;
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 }
     );
   }, []);
 
-  // On mount, auto-fetch only when permission is already granted; reflect a
-  // prior denial. A fresh "prompt" state waits for the user to tap the banner.
+  // On mount, trigger geolocation automatically (so it "just works" on page load
+  // in Chrome/Firefox, which prompt without a gesture). We only skip the auto-
+  // attempt when permission is already denied — there the banner offers a retry
+  // and instructions. Safari/iOS won't show a prompt for this non-gesture call,
+  // but the visible LocationBanner button (a real gesture) is the reliable path.
   useEffect(() => {
     let cancelled = false;
     const perms = (navigator as { permissions?: { query?: (d: { name: PermissionName }) => Promise<PermissionStatus> } }).permissions;
@@ -55,13 +58,15 @@ export function useGeolocation(): GeolocationState {
         .query({ name: 'geolocation' as PermissionName })
         .then((res) => {
           if (cancelled) return;
-          if (res.state === 'granted') request();
-          else if (res.state === 'denied') setStatus('denied');
-          // 'prompt' → wait for the user gesture (banner)
+          if (res.state === 'denied') setStatus('denied');
+          else request(); // 'granted' → silent fetch; 'prompt' → prompt on load
         })
         .catch(() => {
-          /* Permissions API unsupported — leave it to the banner. */
+          if (!cancelled) request();
         });
+    } else {
+      // Older browsers without the Permissions API: just attempt on load.
+      request();
     }
     return () => {
       cancelled = true;
