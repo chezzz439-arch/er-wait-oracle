@@ -9,6 +9,7 @@ import HospitalList from './HospitalList';
 import TrendChart from './TrendChart';
 import IncidentFeed from './IncidentFeed';
 import HospitalDetail from './HospitalDetail';
+import LocationBanner from './LocationBanner';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { useWeather } from '@/hooks/useWeather';
@@ -18,12 +19,9 @@ export default function AppShell() {
   const geo = useGeolocation();
   const { data, loading, error, lastUpdated, syncTick, refresh } = useDashboard(geo.coords);
 
-  // Ask for the user's live location once on load — the whole experience is
-  // built around finding the nearest ERs to wherever they are.
-  useEffect(() => {
-    geo.request();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Geolocation auto-resolves only when already granted (see useGeolocation);
+  // first-time/denied users get the visible LocationBanner CTA below the header,
+  // which is the reliable, gesture-driven way to trigger the browser prompt.
 
   const [activeFacilityId, setActiveFacilityId] = useState<string | null>(null); // hover/highlight
   const [focusedId, setFocusedId] = useState<string | null>(null); // last clicked (persists, shared)
@@ -109,6 +107,12 @@ export default function AppShell() {
         syncTick={syncTick}
         live={!error}
         selectedId={focusedId}
+      />
+
+      <LocationBanner
+        status={geo.status}
+        located={located || geo.status === 'granted'}
+        onLocate={geo.request}
       />
 
       {error && data && (
