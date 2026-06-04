@@ -13,6 +13,7 @@ import LocationBanner from './LocationBanner';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { useWeather } from '@/hooks/useWeather';
+import { useReverseGeocode } from '@/hooks/useReverseGeocode';
 import type { FocusRequest } from './MapInner';
 
 export default function AppShell() {
@@ -41,6 +42,12 @@ export default function AppShell() {
   // so it always reflects exactly where the user is, or shows nothing until GPS
   // resolves (rather than misleading area weather).
   const { weather, loading: weatherLoading } = useWeather(geo.coords);
+
+  // Refine the city label to a neighborhood/street-level name via reverse geocoding.
+  const preciseArea = useReverseGeocode(hasLocation ? geo.coords ?? mapCenter : null);
+  const locationLabel = preciseArea
+    ? `${locSource === 'gps' ? 'Near' : 'Around'} ${preciseArea}`
+    : data?.location?.label ?? null;
 
   const focusOn = useCallback((id: string) => {
     setActiveFacilityId(id);
@@ -109,7 +116,7 @@ export default function AppShell() {
             ? weatherLoading
             : geo.status !== 'denied' && geo.status !== 'unavailable'
         }
-        locationLabel={data?.location?.label ?? null}
+        locationLabel={locationLabel}
         lastUpdated={lastUpdated}
         onRefresh={refresh}
         syncTick={syncTick}
