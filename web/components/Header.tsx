@@ -8,6 +8,7 @@ import type { WeatherView } from '@/lib/types';
 
 export default function Header({
   weather,
+  weatherLoading = false,
   locationLabel,
   lastUpdated,
   onRefresh,
@@ -16,6 +17,7 @@ export default function Header({
   selectedId,
 }: {
   weather: WeatherView | null;
+  weatherLoading?: boolean;
   locationLabel: string | null;
   lastUpdated: number | null;
   onRefresh: () => void;
@@ -52,7 +54,7 @@ export default function Header({
       <div className="flex items-center gap-1.5 sm:gap-3">
         {/* Weather hides its detail stats below sm (handled inside WeatherStrip). */}
         <div className="hidden min-[480px]:block">
-          <WeatherStrip weather={weather} />
+          <WeatherStrip weather={weather} loading={weatherLoading} />
         </div>
         <div className="flex items-center gap-0.5 sm:gap-1">
           <ShareButton selectedId={selectedId} />

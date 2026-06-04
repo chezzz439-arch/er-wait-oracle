@@ -11,9 +11,20 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
   );
 }
 
-export default function WeatherStrip({ weather }: { weather: WeatherView | null }) {
+export default function WeatherStrip({
+  weather,
+  loading = false,
+}: {
+  weather: WeatherView | null;
+  loading?: boolean;
+}) {
   if (!weather) {
-    return <div className="text-[0.8rem] text-muted">Weather unavailable</div>;
+    return (
+      <div className="flex items-center gap-1.5 text-[0.8rem] text-muted">
+        {loading && <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-accent" />}
+        {loading ? 'Loading weather…' : 'Weather unavailable'}
+      </div>
+    );
   }
   const t = weather.temperatureF != null ? `${Math.round(weather.temperatureF)}°` : '—';
   const feels = weather.apparentTempF != null ? `${Math.round(weather.apparentTempF)}°` : '—';

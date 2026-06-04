@@ -36,12 +36,11 @@ export default function AppShell() {
   const located = locSource === 'gps';
   const mapCenter = data?.location ? { lat: data.location.lat, lng: data.location.lng } : null;
 
-  // Weather is fetched client-side (browser → Open-Meteo, near the user) so it
-  // loads where the Vercel server-side fetch can't. It targets the user's real
-  // location — precise GPS if shared, otherwise the IP-based area from the server
-  // — and never the SF default, so it always reflects where the user actually is.
-  const weatherCoords = geo.coords ?? (hasLocation ? mapCenter : null);
-  const weather = useWeather(weatherCoords) ?? (hasLocation ? data?.weather ?? null : null);
+  // Weather is fetched CLIENT-SIDE for the user's EXACT GPS coordinates (two
+  // CORS providers with retry) — never server-side, never the IP/SF fallback —
+  // so it always reflects exactly where the user is, or shows nothing until GPS
+  // resolves (rather than misleading area weather).
+  const { weather, loading: weatherLoading } = useWeather(geo.coords);
 
   const focusOn = useCallback((id: string) => {
     setActiveFacilityId(id);
@@ -105,6 +104,11 @@ export default function AppShell() {
     <div className="flex min-h-[100dvh] flex-col bg-bg text-ink">
       <Header
         weather={weather}
+        weatherLoading={
+          geo.coords
+            ? weatherLoading
+            : geo.status !== 'denied' && geo.status !== 'unavailable'
+        }
         locationLabel={data?.location?.label ?? null}
         lastUpdated={lastUpdated}
         onRefresh={refresh}
@@ -137,6 +141,7 @@ export default function AppShell() {
               activeFacilityId={activeFacilityId}
               focusReq={focusReq}
               userLoc={geo.coords}
+              userAccuracy={geo.accuracy}
               center={mapCenter}
               onHover={setActiveFacilityId}
               onSelect={focusOn}

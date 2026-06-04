@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
-import { MapContainer, TileLayer, Marker, Tooltip, Popup, ZoomControl, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Tooltip, Popup, ZoomControl, Circle, useMap } from 'react-leaflet';
 import clsx from 'clsx';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
 import { BusyScoreRing, BusyLevelPill, ConfidenceMeter } from './primitives';
@@ -192,6 +192,7 @@ export default function MapInner({
   activeFacilityId,
   focusReq,
   userLoc,
+  userAccuracy,
   center,
   onHover,
   onSelect,
@@ -202,6 +203,7 @@ export default function MapInner({
   activeFacilityId: string | null;
   focusReq: FocusRequest;
   userLoc: LatLng | null;
+  userAccuracy: number | null;
   center: LatLng | null;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
@@ -238,11 +240,24 @@ export default function MapInner({
         <FocusController focusReq={focusReq} byId={byId} markerRefs={markerRefs} />
 
         {userLoc && (
-          <Marker position={[userLoc.lat, userLoc.lng]} icon={USER_ICON} zIndexOffset={2000} interactive={false}>
-            <Tooltip className="oracle-tip" direction="top" offset={[0, -8]} opacity={1}>
-              <span className="text-[0.78rem] font-semibold text-ink">You are here</span>
-            </Tooltip>
-          </Marker>
+          <>
+            {userAccuracy != null && userAccuracy <= 3000 && (
+              <Circle
+                center={[userLoc.lat, userLoc.lng]}
+                radius={userAccuracy}
+                pathOptions={{ color: '#2563eb', weight: 1, fillColor: '#2563eb', fillOpacity: 0.08 }}
+                interactive={false}
+              />
+            )}
+            <Marker position={[userLoc.lat, userLoc.lng]} icon={USER_ICON} zIndexOffset={2000} interactive={false}>
+              <Tooltip permanent className="oracle-user-tip" direction="bottom" offset={[0, 10]} opacity={1}>
+                <span className="font-semibold text-[#2563eb]">You are here</span>
+                {userAccuracy != null && (
+                  <span className="nums ml-1 text-muted">· ±{userAccuracy}m</span>
+                )}
+              </Tooltip>
+            </Marker>
+          </>
         )}
 
         {hospitals.map((h) => {

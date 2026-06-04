@@ -170,6 +170,19 @@
   .leaflet-tooltip.oracle-tip::before {
     display: none;
   }
+  /* compact permanent label under the "you are here" dot */
+  .leaflet-tooltip.oracle-user-tip {
+    background: rgb(var(--c-surface));
+    border: 1px solid rgb(37 99 235 / 0.4);
+    border-radius: 9999px;
+    box-shadow: 0 2px 8px rgba(15, 27, 45, 0.18);
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+  .leaflet-tooltip.oracle-user-tip::before {
+    display: none;
+  }
   .leaflet-popup.oracle-popup .leaflet-popup-content-wrapper {
     background: rgb(var(--c-surface));
     border: 1px solid rgb(var(--c-hairline));

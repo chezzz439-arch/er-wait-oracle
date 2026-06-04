@@ -6,78 +6,111 @@ type GeoStatus = 'idle' | 'prompting' | 'granted' | 'denied' | 'unavailable';
 
 export interface GeolocationState {
   coords: LatLng | null;
+  accuracy: number | null; // meters of the current best fix
   status: GeoStatus;
   request: () => void;
   clear: () => void;
 }
 
-// Browser geolocation tuned for reliability across browsers:
-//   • On mount we check the Permissions API. If already granted, we fetch
-//     silently (no prompt). Otherwise we leave it to a user gesture — Safari/iOS
-//     will NOT show a prompt for an auto-fired getCurrentPosition() on load, so
-//     the visible "Use my location" banner is what actually triggers the prompt.
-//   • request() is safe to call from a click handler (the reliable path) or once
-//     automatically; we de-dupe so we never stack prompts.
+const GOOD_ENOUGH_M = 100; // stop refining once within 100 m…
+const REFINE_WINDOW_MS = 10000; // …or after 10 s, whichever comes first
+const GEO_OPTS: PositionOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+
+// Browser geolocation with progressive refinement:
+//   • getCurrentPosition for the initial exact fix (high accuracy, no cache).
+//   • then watchPosition to refine — adopt a reading only if it's MORE accurate
+//     (smaller accuracy in meters); stop once under 100 m or after 10 s.
+//   • exposes `accuracy` so the map can show a "±50 m" indicator on the dot.
+// Auto-fires once on load (Chrome/Firefox prompt without a gesture); the
+// LocationBanner button is the gesture path for Safari/iOS. A manual request()
+// is never deduped against the auto-attempt, so a tap always re-tries.
 export function useGeolocation(): GeolocationState {
   const [coords, setCoords] = useState<LatLng | null>(null);
+  const [accuracy, setAccuracy] = useState<number | null>(null);
   const [status, setStatus] = useState<GeoStatus>('idle');
-  const inFlight = useRef(false);
+
+  const watchId = useRef<number | null>(null);
+  const watchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bestAcc = useRef<number>(Infinity);
+
+  const stopWatch = useCallback(() => {
+    if (watchId.current != null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchId.current);
+    }
+    watchId.current = null;
+    if (watchTimer.current) {
+      clearTimeout(watchTimer.current);
+      watchTimer.current = null;
+    }
+  }, []);
+
+  // Adopt a position only if it's the first fix or strictly more accurate.
+  const accept = useCallback(
+    (pos: GeolocationPosition) => {
+      const acc = pos.coords.accuracy ?? Infinity;
+      // strictly more accurate only (bestAcc starts at Infinity, so the first
+      // finite fix is still adopted) — avoids dot jitter on equal-accuracy reads.
+      if (acc < bestAcc.current) {
+        bestAcc.current = acc;
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setAccuracy(Number.isFinite(acc) ? Math.round(acc) : null);
+      }
+      setStatus('granted');
+      if (acc <= GOOD_ENOUGH_M) stopWatch();
+    },
+    [stopWatch]
+  );
+
+  const startWatch = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation || watchId.current != null) return;
+    try {
+      watchId.current = navigator.geolocation.watchPosition(accept, () => {}, GEO_OPTS);
+      watchTimer.current = setTimeout(stopWatch, REFINE_WINDOW_MS);
+    } catch {
+      /* watch unsupported — the initial fix still stands */
+    }
+  }, [accept, stopWatch]);
 
   const request = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setStatus('unavailable');
       return;
     }
-    if (inFlight.current) return;
-    inFlight.current = true;
+    stopWatch();
+    bestAcc.current = Infinity;
     setStatus('prompting');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setStatus('granted');
-        inFlight.current = false;
-      },
-      (err) => {
-        setStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable');
-        inFlight.current = false;
-      },
-      { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 }
-    );
-  }, []);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          accept(pos);
+          if ((pos.coords.accuracy ?? Infinity) > GOOD_ENOUGH_M) startWatch(); // refine
+        },
+        (err) => setStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable'),
+        GEO_OPTS
+      );
+    } catch {
+      // Some browsers throw synchronously (e.g. insecure context) — never wedge.
+      setStatus('unavailable');
+    }
+  }, [accept, startWatch, stopWatch]);
 
-  // On mount, trigger geolocation automatically (so it "just works" on page load
-  // in Chrome/Firefox, which prompt without a gesture). We only skip the auto-
-  // attempt when permission is already denied — there the banner offers a retry
-  // and instructions. Safari/iOS won't show a prompt for this non-gesture call,
-  // but the visible LocationBanner button (a real gesture) is the reliable path.
+  // Auto-attempt once on mount (the spec's unconditional getCurrentPosition).
+  const autoFired = useRef(false);
   useEffect(() => {
-    let cancelled = false;
-    const perms = (navigator as { permissions?: { query?: (d: { name: PermissionName }) => Promise<PermissionStatus> } }).permissions;
-    if (perms?.query) {
-      perms
-        .query({ name: 'geolocation' as PermissionName })
-        .then((res) => {
-          if (cancelled) return;
-          if (res.state === 'denied') setStatus('denied');
-          else request(); // 'granted' → silent fetch; 'prompt' → prompt on load
-        })
-        .catch(() => {
-          if (!cancelled) request();
-        });
-    } else {
-      // Older browsers without the Permissions API: just attempt on load.
+    if (!autoFired.current) {
+      autoFired.current = true;
       request();
     }
-    return () => {
-      cancelled = true;
-    };
-  }, [request]);
+    return () => stopWatch();
+  }, [request, stopWatch]);
 
   const clear = useCallback(() => {
+    stopWatch();
+    bestAcc.current = Infinity;
     setCoords(null);
+    setAccuracy(null);
     setStatus('idle');
-    inFlight.current = false;
-  }, []);
+  }, [stopWatch]);
 
-  return { coords, status, request, clear };
+  return { coords, accuracy, status, request, clear };
 }
