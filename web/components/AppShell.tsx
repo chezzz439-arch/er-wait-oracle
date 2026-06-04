@@ -14,6 +14,7 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { useWeather } from '@/hooks/useWeather';
 import { useReverseGeocode } from '@/hooks/useReverseGeocode';
+import { haversineMiles } from '@/lib/geo';
 import type { FocusRequest } from './MapInner';
 
 export default function AppShell() {
@@ -29,9 +30,33 @@ export default function AppShell() {
   const [detailId, setDetailId] = useState<string | null>(null); // open detail drawer
   const [focusReq, setFocusReq] = useState<FocusRequest>({ id: null, nonce: 0 });
 
-  const hospitals = data?.hospitals ?? [];
-  const recommendation = data?.recommendation ?? null;
-  const recommendedId = recommendation?.facilityId ?? null;
+  const rawHospitals = data?.hospitals ?? [];
+  const rawRecommendation = data?.recommendation ?? null;
+  const recommendedId = rawRecommendation?.facilityId ?? null;
+
+  // Single source of truth for distance: haversine from the user's EXACT GPS to
+  // each hospital. Overrides the server's distance (which is computed from the
+  // API origin — possibly IP-based) so the card, list and detail drawer all show
+  // the same accurate mileage. Falls back to the server value when there's no GPS.
+  const hospitals = useMemo(() => {
+    const o = geo.coords;
+    if (!o) return rawHospitals;
+    return rawHospitals.map((h) => ({
+      ...h,
+      distanceMiles: Number(haversineMiles(o, { lat: h.lat, lng: h.lng }).toFixed(1)),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawHospitals, geo.coords?.lat, geo.coords?.lng]);
+
+  const recommendation = useMemo(() => {
+    if (!rawRecommendation) return null;
+    const m = hospitals.find((h) => h.facilityId === rawRecommendation.facilityId);
+    if (!m || m.distanceMiles == null) return rawRecommendation;
+    // Keep the rationale's "about X mi away" phrase in sync with the corrected distance.
+    const rationale = rawRecommendation.rationale.replace(/about [\d.]+ mi away/, `about ${m.distanceMiles} mi away`);
+    return { ...rawRecommendation, distanceMiles: m.distanceMiles, rationale };
+  }, [rawRecommendation, hospitals]);
+
   const locSource = data?.location?.source ?? 'default';
   const hasLocation = locSource !== 'default'; // precise GPS or approximate IP
   const located = locSource === 'gps';

@@ -82,7 +82,10 @@ export default function HospitalDetail({
   const hue = LEVEL_HEX[hospital.prediction.busyLevel];
   const isModel = hospital.prediction.source === 'model';
 
-  const distance = userLoc ? haversineMiles(userLoc, { lat: hospital.lat, lng: hospital.lng }) : null;
+  // Use the same distance the list/card show (haversine from the user's exact GPS,
+  // injected upstream); fall back to a local calc only if it's missing.
+  const distance =
+    hospital.distanceMiles ?? (userLoc ? haversineMiles(userLoc, { lat: hospital.lat, lng: hospital.lng }) : null);
 
   // Close on Escape.
   useEffect(() => {
