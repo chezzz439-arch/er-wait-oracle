@@ -1,0 +1,23 @@
+# Local ClickHouse for development. `docker compose up -d` then the pipeline's
+# defaults (http://localhost:8123, user "default", no password) connect straight away.
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: er-oracle-clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface (used by @clickhouse/client)
+      - "9000:9000"   # native protocol
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ./clickhouse-data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: er_oracle
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

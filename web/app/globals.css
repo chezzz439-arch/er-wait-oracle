@@ -1,0 +1,270 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Palette as RGB channels so Tailwind /opacity works and dark mode can flip them.
+     Accent + busy hues stay (nearly) constant across themes (semantic colors). */
+  :root {
+    --c-bg: 247 249 251;
+    --c-surface: 255 255 255;
+    --c-surface-alt: 241 244 248;
+    --c-hairline: 229 234 240;
+    --c-ink: 15 27 45;
+    --c-muted: 107 122 144;
+    --c-accent: 14 159 154;
+    --c-busy-low: 31 174 104;
+    --c-busy-mod: 224 162 28;
+    --c-busy-high: 236 122 44;
+    --c-busy-severe: 224 74 57;
+    --c-ring-track: 237 241 246;
+    --c-map-bg: 238 242 246;
+  }
+  html.dark {
+    --c-bg: 11 18 32;
+    --c-surface: 19 28 43;
+    --c-surface-alt: 27 38 56;
+    --c-hairline: 37 52 74;
+    --c-ink: 232 238 246;
+    --c-muted: 147 161 181;
+    --c-accent: 25 191 185;
+    --c-ring-track: 37 52 74;
+    --c-map-bg: 14 23 38;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    background: rgb(var(--c-bg));
+    color: rgb(var(--c-ink));
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    transition: background-color 300ms ease, color 300ms ease;
+  }
+  /* tabular numerals everywhere a number can change on refresh */
+  .nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* ---- Leaflet marker: score pill ---- */
+  .marker-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .marker-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: var(--pill-bg);
+    color: #fff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    border: 2px solid rgb(var(--c-surface));
+    box-shadow: 0 1px 3px rgba(15, 27, 45, 0.28);
+    transition: transform 160ms ease-out, box-shadow 160ms ease-out;
+  }
+  .marker-pill--hollow {
+    background: rgb(var(--c-surface));
+    color: rgb(var(--c-muted));
+    border: 1.5px dashed rgb(var(--c-muted) / 0.6);
+  }
+  .marker-pill--hollow-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    border: 1.5px solid rgb(var(--c-surface));
+    background: var(--pill-bg);
+  }
+  .marker--recommended .marker-pill {
+    box-shadow: 0 0 0 3px rgb(var(--c-accent)), 0 2px 6px rgba(14, 159, 154, 0.4);
+  }
+  .marker--active .marker-pill {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 2px rgb(var(--c-accent)), 0 4px 10px rgba(15, 27, 45, 0.25);
+  }
+  .marker-check {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    background: rgb(var(--c-accent));
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgb(var(--c-surface));
+    font-size: 10px;
+    line-height: 1;
+  }
+  .marker-halo {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 2px solid rgb(var(--c-accent));
+    animation: breathe 2.2s ease-out infinite;
+    pointer-events: none;
+  }
+
+  /* ---- User location marker ---- */
+  .user-dot {
+    position: relative;
+    width: 18px;
+    height: 18px;
+  }
+  .user-dot__core {
+    position: absolute;
+    inset: 4px;
+    border-radius: 9999px;
+    background: #2563eb;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(15, 27, 45, 0.4);
+  }
+  .user-dot__ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: rgba(37, 99, 235, 0.3);
+    animation: breathe 2.4s ease-out infinite;
+  }
+  @keyframes breathe {
+    0% {
+      transform: scale(1);
+      opacity: 0.5;
+    }
+    100% {
+      transform: scale(1.7);
+      opacity: 0;
+    }
+  }
+
+  /* dim non-spotlighted markers when a legend band is selected */
+  .marker--dimmed {
+    opacity: 0.28;
+    filter: saturate(0.6);
+    transition: opacity 200ms ease, filter 200ms ease;
+  }
+
+  /* ---- Leaflet tooltip / popup theming ---- */
+  .leaflet-tooltip.oracle-tip {
+    background: rgb(var(--c-surface));
+    border: 1px solid rgb(var(--c-hairline));
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(15, 27, 45, 0.12);
+    padding: 8px 10px;
+    color: rgb(var(--c-ink));
+    font-weight: 500;
+  }
+  .leaflet-tooltip.oracle-tip::before {
+    display: none;
+  }
+  .leaflet-popup.oracle-popup .leaflet-popup-content-wrapper {
+    background: rgb(var(--c-surface));
+    border: 1px solid rgb(var(--c-hairline));
+    border-radius: 14px;
+    box-shadow: 0 8px 28px rgba(15, 27, 45, 0.16);
+  }
+  .leaflet-popup.oracle-popup .leaflet-popup-content {
+    margin: 14px 16px;
+    line-height: 1.45;
+  }
+  .leaflet-popup.oracle-popup .leaflet-popup-tip {
+    background: rgb(var(--c-surface));
+    border: 1px solid rgb(var(--c-hairline));
+  }
+  .leaflet-container {
+    background: rgb(var(--c-map-bg));
+    font-family: var(--font-inter), system-ui, sans-serif;
+  }
+  .leaflet-bar a {
+    border-radius: 8px !important;
+    background: rgb(var(--c-surface));
+    color: rgb(var(--c-ink));
+    border-color: rgb(var(--c-hairline)) !important;
+  }
+  /* keep CARTO attribution legible on the dark basemap */
+  html.dark .leaflet-control-attribution {
+    background: rgba(19, 28, 43, 0.8) !important;
+    color: rgb(var(--c-muted)) !important;
+  }
+  html.dark .leaflet-control-attribution a {
+    color: rgb(var(--c-accent)) !important;
+  }
+
+  /* scroll fade masks for the hospital list */
+  .fade-y {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 14px,
+      #000 calc(100% - 14px),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      #000 14px,
+      #000 calc(100% - 14px),
+      transparent 100%
+    );
+  }
+  .thin-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .thin-scroll::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-muted) / 0.45);
+    border-radius: 9999px;
+  }
+  .thin-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* header refresh sync sweep */
+  .sync-sweep {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(14, 159, 154, 0.18),
+      transparent
+    );
+    animation: sweep 600ms ease-out;
+  }
+  @keyframes sweep {
+    0% {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    40% {
+      opacity: 0.8;
+    }
+    100% {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker-halo,
+  .sync-sweep,
+  .animate-pulseDot,
+  .animate-rise,
+  .animate-slideSwap {
+    animation: none !important;
+  }
+}

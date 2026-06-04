@@ -1,0 +1,22 @@
+{
+  "name": "er-wait-oracle",
+  "version": "1.0.0",
+  "description": "Predicts which San Francisco ERs will be busy in the next 4 hours by combining CMS hospital baselines, live weather, and accumulated history via the Anthropic SDK.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js serve",
+    "init-db": "node src/index.js init-db",
+    "ingest": "node src/index.js ingest",
+    "predict": "node src/index.js predict",
+    "status": "node src/index.js status"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@clickhouse/client": "^1.7.0",
+    "node-cron": "^3.0.3"
+  }
+}

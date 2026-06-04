@@ -1,0 +1,13 @@
+node_modules/
+.env
+*.log
+.DS_Store
+clickhouse-data/
+
+# Next.js build output + TS incremental cache
+.next/
+*.tsbuildinfo
+
+# Standalone ClickHouse server (downloaded locally when Docker isn't available)
+/clickhouse
+/clickhouse-local-data/
