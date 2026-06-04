@@ -24,17 +24,21 @@ export function useDashboard(coords: LatLng | null): DashboardState {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [syncTick, setSyncTick] = useState(0);
-  const inFlight = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Stable key so the effect re-runs only on meaningful coordinate changes.
+  // Stable key so the callback/effect re-run only on meaningful coordinate changes.
   const coordKey = coords ? `${coords.lat.toFixed(4)},${coords.lng.toFixed(4)}` : '';
 
   const fetchOnce = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    // Abort any in-flight request and supersede it — critical so a GPS-coords
+    // fetch is never dropped just because the initial no-coords fetch is still
+    // running (that left the view stuck on IP-based hospitals).
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const url = coordKey ? `/api/dashboard?lat=${coords!.lat}&lng=${coords!.lng}` : '/api/dashboard';
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as DashboardData;
       setData(json);
@@ -42,10 +46,10 @@ export function useDashboard(coords: LatLng | null): DashboardState {
       setLastUpdated(Date.now());
       setSyncTick((t) => t + 1);
     } catch (err) {
+      if ((err as Error).name === 'AbortError') return; // superseded by a newer fetch
       setError((err as Error).message || 'fetch failed');
     } finally {
-      setLoading(false);
-      inFlight.current = false;
+      if (abortRef.current === ctrl) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coordKey]);
@@ -53,7 +57,10 @@ export function useDashboard(coords: LatLng | null): DashboardState {
   useEffect(() => {
     fetchOnce();
     const id = setInterval(fetchOnce, REFRESH_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      abortRef.current?.abort();
+    };
   }, [fetchOnce]);
 
   return { data, loading, error, lastUpdated, syncTick, refresh: fetchOnce };
